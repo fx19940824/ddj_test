@@ -1,0 +1,17 @@
+# GUI Framework
+PyQt6>=6.6.0
+
+# Screen Capture
+mss>=9.0.1
+
+# Image Processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# OCR
+pytesseract>=0.3.10
+
+# Utilities
+pywin32>=306
+keyboard>=0.13.5

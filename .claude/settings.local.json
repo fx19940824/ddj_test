@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python tests/test_game_logic.py)",
+      "Bash(python tests/test_ai.py)"
+    ]
+  }
+}
