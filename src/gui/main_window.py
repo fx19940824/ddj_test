@@ -275,23 +275,34 @@ class MainWindow(QMainWindow):
 
         from src.game.card import cards_to_str
 
-        # 检查是否是我出的牌（所有牌都在我手里）
+        def _find_card_by_rank(hand, target_card):
+            """在手中查找牌面相同的牌（忽略花色）"""
+            for i, hand_card in enumerate(hand):
+                if hand_card.rank == target_card.rank:
+                    return i
+            return -1
+
+        # 检查是否是我出的牌（所有牌都在我手里，只比较牌面）
         is_my_play = True
+        indices_to_remove = []
         for card in cards:
-            if card not in self.game_state.my_hand:
+            idx = _find_card_by_rank(self.game_state.my_hand, card)
+            if idx == -1:
                 is_my_play = False
                 break
+            indices_to_remove.append(idx)
 
         if is_my_play and self.game_state.my_hand:
             # 我出牌 - 从手牌移除，添加到已出牌
-            for card in cards:
-                if card in self.game_state.my_hand:
-                    self.game_state.my_hand.remove(card)
-            self.game_state.played_cards.extend(cards)
+            # 按索引从大到小移除，避免索引变化问题
+            for idx in sorted(indices_to_remove, reverse=True):
+                removed_card = self.game_state.my_hand.pop(idx)
+                self.game_state.played_cards.append(removed_card)
 
             self._update_hand_display()
             self._update_remaining_display()
             self.status_label.setText(f"我出牌: {cards_to_str(cards)}")
+            self._add_log(f"我出牌: {cards_to_str(cards)}")
 
         else:
             # 上家出牌
@@ -304,6 +315,7 @@ class MainWindow(QMainWindow):
             self._update_remaining_display()
             self._update_suggestions()
             self.status_label.setText(f"上家出牌: {cards_to_str(cards)}")
+            self._add_log(f"上家出牌: {cards_to_str(cards)}")
 
     def _reset_game(self):
         """重置游戏"""
