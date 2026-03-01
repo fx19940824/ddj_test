@@ -141,6 +141,10 @@ class MainWindow(QMainWindow):
         self.btn_input_hand.clicked.connect(self._open_hand_input)
         toolbar.addWidget(self.btn_input_hand)
 
+        self.btn_recognize_hand = QPushButton("识别手牌")
+        self.btn_recognize_hand.clicked.connect(self._recognize_hand_from_image)
+        toolbar.addWidget(self.btn_recognize_hand)
+
         self.btn_add_played = QPushButton("记录出牌")
         self.btn_add_played.clicked.connect(self._open_played_input)
         toolbar.addWidget(self.btn_add_played)
@@ -228,6 +232,62 @@ class MainWindow(QMainWindow):
                 self._update_remaining_display()
                 self._update_suggestions()
                 self.status_label.setText(f"已输入 {len(cards)} 张手牌")
+
+    def _recognize_hand_from_image(self):
+        """从截图识别手牌"""
+        import numpy as np
+        from PIL import Image
+        from src.game.card import sort_cards
+
+        # 检查是否有模板
+        if not self.card_detector.has_templates():
+            QMessageBox.warning(self, "提示", "未找到卡片模板！请先使用校准工具创建模板。")
+            return
+
+        # 选择截图文件
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "选择手牌截图",
+            "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
+        )
+        if not filepath:
+            return
+
+        try:
+            # 读取截图
+            pil_img = Image.open(filepath)
+            img = np.array(pil_img)
+            if len(img.shape) == 3 and img.shape[2] == 4:
+                img = img[:, :, :3]
+
+            # 降低阈值以提高识别率
+            original_threshold = self.card_detector.threshold
+            self.card_detector.set_threshold(0.5)
+
+            # 识别卡片
+            cards = self.card_detector.detect_cards(img)
+
+            # 恢复原始阈值
+            self.card_detector.set_threshold(original_threshold)
+
+            if not cards:
+                # 尝试更低的阈值
+                self.card_detector.set_threshold(0.3)
+                cards = self.card_detector.detect_cards(img)
+                self.card_detector.set_threshold(original_threshold)
+
+            if cards:
+                # 排序
+                cards = sort_cards(cards)
+                self.game_state.my_hand = cards
+                self._update_hand_display()
+                self._update_remaining_display()
+                self._update_suggestions()
+                self.status_label.setText(f"已识别 {len(cards)} 张手牌")
+            else:
+                QMessageBox.warning(self, "提示", "未能识别到手牌，请尝试手动输入或使用更低的匹配阈值。")
+
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"识别失败：{str(e)}")
 
     def _open_played_input(self):
         """打开记录出牌对话框"""

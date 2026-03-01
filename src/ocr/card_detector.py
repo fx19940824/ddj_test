@@ -6,6 +6,7 @@ import cv2
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 import logging
+from PIL import Image
 
 from config.settings import (
     CARDS_TEMPLATE_DIR,
@@ -20,13 +21,31 @@ from .preprocessor import ImagePreprocessor
 logger = logging.getLogger(__name__)
 
 
+def imread_pil(filepath: str) -> Optional[np.ndarray]:
+    """使用PIL读取图片（支持中文路径）"""
+    try:
+        pil_img = Image.open(filepath)
+        img = np.array(pil_img)
+        # 转换为灰度
+        if len(img.shape) == 3:
+            if img.shape[2] == 4:
+                # RGBA -> RGB
+                img = img[:, :, :3]
+            # RGB -> GRAY
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        return img
+    except Exception as e:
+        logger.warning(f"Failed to read image {filepath}: {e}")
+        return None
+
+
 class CardDetector:
     """卡片识别器"""
 
     def __init__(self):
         self.preprocessor = ImagePreprocessor()
         self.templates: Dict[str, np.ndarray] = {}
-        self.template_size = (50, 80)  # 模板尺寸
+        self.template_sizes: Dict[str, Tuple[int, int]] = {}
         self.threshold = DEFAULT_OCR_CONFIG.template_match_threshold
 
         # 尝试加载模板
@@ -38,16 +57,24 @@ class CardDetector:
             logger.warning(f"Template directory not found: {CARDS_TEMPLATE_DIR}")
             return
 
+        loaded = 0
         for template_file in CARDS_TEMPLATE_DIR.glob("*.png"):
+            name = template_file.stem
+            # 跳过截图文件
+            if name in ["我的手牌截图", "我的手牌2", "我的手牌3"]:
+                continue
+
             try:
-                img = cv2.imread(str(template_file), cv2.IMREAD_GRAYSCALE)
+                # 使用PIL读取（支持中文路径）
+                img = imread_pil(str(template_file))
                 if img is not None:
-                    name = template_file.stem
-                    self.templates[name] = cv2.resize(img, self.template_size)
+                    self.templates[name] = img
+                    self.template_sizes[name] = (img.shape[1], img.shape[0])
+                    loaded += 1
             except Exception as e:
                 logger.warning(f"Failed to load template {template_file}: {e}")
 
-        logger.info(f"Loaded {len(self.templates)} card templates")
+        logger.info(f"Loaded {loaded} card templates")
 
     def has_templates(self) -> bool:
         """是否有模板"""
@@ -66,51 +93,90 @@ class CardDetector:
         if image is None or image.size == 0:
             return []
 
-        # 预处理
-        processed = self.preprocessor.preprocess(image)
-
         # 如果没有模板，返回空列表
         if not self.has_templates():
-            return self._fallback_detection(processed)
+            return []
 
-        # 使用模板匹配
-        return self._template_match_detection(processed)
+        # 使用多尺度模板匹配
+        return self._multi_scale_template_match(image)
 
-    def _template_match_detection(self, image: np.ndarray) -> List[Card]:
-        """使用模板匹配识别"""
+    def _multi_scale_template_match(self, image: np.ndarray) -> List[Card]:
+        """多尺度模板匹配识别多张卡片"""
+        # 转换为灰度
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = image
+
         cards = []
+        detected_positions = []  # 已检测到的位置，避免重复
 
-        # 简单实现: 在图像中寻找单个卡片
-        try:
-            # 调整图像大小
-            resized = cv2.resize(image, self.template_size)
+        # 对每个模板进行匹配
+        for name, template in self.templates.items():
+            template_h, template_w = template.shape[:2]
 
+            # 尝试不同的缩放比例
+            scales = [0.8, 0.9, 1.0, 1.1, 1.2]
             best_match = None
             best_score = 0
+            best_loc = None
+            best_scale = 1.0
 
-            for name, template in self.templates.items():
-                result = cv2.matchTemplate(resized, template, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(result)
+            for scale in scales:
+                try:
+                    # 缩放模板
+                    if scale != 1.0:
+                        new_w = int(template_w * scale)
+                        new_h = int(template_h * scale)
+                        if new_w < 10 or new_h < 10:
+                            continue
+                        scaled_template = cv2.resize(template, (new_w, new_h))
+                    else:
+                        scaled_template = template
 
-                if max_val > best_score and max_val >= self.threshold:
-                    best_score = max_val
-                    best_match = name
+                    # 模板匹配
+                    result = cv2.matchTemplate(gray, scaled_template, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-            if best_match:
-                card = self._name_to_card(best_match)
-                if card:
-                    cards.append(card)
+                    if max_val > best_score:
+                        best_score = max_val
+                        best_match = name
+                        best_loc = max_loc
+                        best_scale = scale
 
-        except Exception as e:
-            logger.warning(f"Template match error: {e}")
+                except Exception as e:
+                    continue
+
+            # 检查是否超过阈值且不与已检测的卡片重叠
+            if best_match and best_score >= self.threshold:
+                # 检查是否与已检测的位置重叠
+                template_w_scaled = int(template_w * best_scale)
+                template_h_scaled = int(template_h * best_scale)
+                x, y = best_loc
+
+                # 检查重叠
+                overlap = False
+                for (dx, dy, dw, dh) in detected_positions:
+                    if (x < dx + dw and x + template_w_scaled > dx and
+                        y < dy + dh and y + template_h_scaled > dy):
+                        overlap = True
+                        break
+
+                if not overlap:
+                    card = self._name_to_card(best_match)
+                    if card:
+                        cards.append(card)
+                        detected_positions.append((x, y, template_w_scaled, template_h_scaled))
+                        logger.debug(f"Detected {best_match} at ({x}, {y}) with score {best_score:.2f}")
+
+        # 按从左到右排序卡片
+        if detected_positions:
+            # 合并位置和卡片，按x坐标排序
+            combined = list(zip(detected_positions, cards))
+            combined.sort(key=lambda item: item[0][0])
+            cards = [card for (pos, card) in combined]
 
         return cards
-
-    def _fallback_detection(self, image: np.ndarray) -> List[Card]:
-        """无模板时的备用识别"""
-        # 这里需要用户手动创建模板
-        # 返回空列表
-        return []
 
     def _name_to_card(self, name: str) -> Optional[Card]:
         """模板名称转卡片对象"""
@@ -167,16 +233,23 @@ class CardDetector:
             是否成功
         """
         try:
-            processed = self.preprocessor.preprocess(card_image)
-            resized = cv2.resize(processed, self.template_size)
+            # 转换为灰度
+            if len(card_image.shape) == 3:
+                if card_image.shape[2] == 4:
+                    card_image = card_image[:, :, :3]
+                gray = cv2.cvtColor(card_image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = card_image
 
             if not CARDS_TEMPLATE_DIR.exists():
                 CARDS_TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
 
             filepath = CARDS_TEMPLATE_DIR / f"{card_name}.png"
-            cv2.imwrite(str(filepath), resized)
+            # 使用PIL保存（支持中文路径）
+            Image.fromarray(gray).save(filepath)
 
-            self.templates[card_name] = resized
+            self.templates[card_name] = gray
+            self.template_sizes[card_name] = (gray.shape[1], gray.shape[0])
             return True
 
         except Exception as e:
