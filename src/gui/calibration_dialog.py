@@ -272,10 +272,29 @@ class CalibrationDialog(QDialog):
     def _capture_screen(self):
         """截取屏幕"""
         try:
+            # 最小化对话框以避免遮挡
+            self.showMinimized()
+
+            # 延迟一小段时间确保窗口完全最小化
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(300, self._do_capture)
+
+        except Exception as e:
+            self.showNormal()
+            QMessageBox.warning(self, "错误", f"截取屏幕失败：{str(e)}")
+
+    def _do_capture(self):
+        """实际执行截图"""
+        try:
             img = self.screen_capture.capture_full_screen()
             if img is not None:
                 self.region_widget.set_image(img)
+            # 恢复窗口
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
         except Exception as e:
+            self.showNormal()
             QMessageBox.warning(self, "错误", f"截取屏幕失败：{str(e)}")
 
     def _clear_selection(self):
