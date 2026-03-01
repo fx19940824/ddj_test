@@ -116,7 +116,7 @@ class CardDetector:
             template_h, template_w = template.shape[:2]
 
             # 尝试不同的缩放比例
-            scales = [0.8, 0.9, 1.0, 1.1, 1.2]
+            scales = [0.9, 1.0, 1.1]
             best_match = None
             best_score = 0
             best_loc = None

@@ -11,12 +11,59 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import numpy as np
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMessageBox, QButtonGroup
+    QPushButton, QLabel, QMessageBox, QButtonGroup, QListWidget,
+    QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QRect, QPoint
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QFont, QImage
 
 from src.capture.screen_capture import ScreenCapture
+
+
+class WindowSelectDialog(QDialog):
+    """窗口选择对话框"""
+
+    def __init__(self, windows, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("选择窗口")
+        self.setMinimumSize(500, 400)
+        self.selected_hwnd = None
+        self.windows = windows
+
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        # 说明
+        label = QLabel("请选择要截取的窗口：")
+        layout.addWidget(label)
+
+        # 窗口列表
+        self.window_list = QListWidget()
+        for hwnd, title in self.windows:
+            self.window_list.addItem(f"{title} (HWND: {hwnd})")
+        self.window_list.itemDoubleClicked.connect(self._on_double_click)
+        layout.addWidget(self.window_list, 1)
+
+        # 按钮
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._on_ok)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_double_click(self, item):
+        """双击选择"""
+        self._on_ok()
+
+    def _on_ok(self):
+        """确认选择"""
+        current_row = self.window_list.currentRow()
+        if current_row >= 0:
+            self.selected_hwnd = self.windows[current_row][0]
+            self.accept()
 
 
 class RegionSelectWidget(QWidget):
@@ -205,6 +252,9 @@ class CalibrationDialog(QDialog):
         # 初始区域配置
         self.result_regions = initial_regions or {}
 
+        # 窗口偏移量 (如果从窗口截图，需要保存偏移)
+        self.window_offset = (0, 0)  # (x, y)
+
         self._init_ui()
 
     def _init_ui(self):
@@ -270,21 +320,41 @@ class CalibrationDialog(QDialog):
         self.region_widget.set_current_region(region_type)
 
     def _capture_screen(self):
-        """截取屏幕"""
+        """截取屏幕 - 先询问用户选择截图方式"""
+        # 弹出选择对话框
+        choice = QMessageBox.question(
+            self,
+            "选择截图方式",
+            "请选择截图方式：\n\n"
+            "• Yes: 截取全屏\n"
+            "• No: 选择窗口",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+        )
+
+        if choice == QMessageBox.StandardButton.Yes:
+            # 全屏截图
+            self.window_offset = (0, 0)
+            self._do_capture_fullscreen()
+        elif choice == QMessageBox.StandardButton.No:
+            # 窗口选择
+            self._do_capture_window()
+
+    def _do_capture_fullscreen(self):
+        """截取全屏"""
         try:
             # 最小化对话框以避免遮挡
             self.showMinimized()
 
             # 延迟一小段时间确保窗口完全最小化
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(300, self._do_capture)
+            QTimer.singleShot(300, self._finish_fullscreen_capture)
 
         except Exception as e:
             self.showNormal()
             QMessageBox.warning(self, "错误", f"截取屏幕失败：{str(e)}")
 
-    def _do_capture(self):
-        """实际执行截图"""
+    def _finish_fullscreen_capture(self):
+        """完成全屏截图"""
         try:
             img = self.screen_capture.capture_full_screen()
             if img is not None:
@@ -297,6 +367,52 @@ class CalibrationDialog(QDialog):
             self.showNormal()
             QMessageBox.warning(self, "错误", f"截取屏幕失败：{str(e)}")
 
+    def _do_capture_window(self):
+        """选择窗口并截图"""
+        try:
+            # 获取窗口列表
+            windows = self.screen_capture.list_windows()
+            if not windows:
+                QMessageBox.warning(self, "提示", "未找到可见窗口")
+                return
+
+            # 显示窗口选择对话框
+            dialog = WindowSelectDialog(windows, self)
+            if dialog.exec() != WindowSelectDialog.DialogCode.Accepted:
+                return
+
+            hwnd = dialog.selected_hwnd
+            if hwnd is None:
+                return
+
+            # 最小化对话框
+            self.showMinimized()
+
+            # 延迟后截图
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(300, lambda: self._finish_window_capture(hwnd))
+
+        except Exception as e:
+            self.showNormal()
+            QMessageBox.warning(self, "错误", f"窗口截图失败：{str(e)}")
+
+    def _finish_window_capture(self, hwnd: int):
+        """完成窗口截图"""
+        try:
+            result = self.screen_capture.capture_window(hwnd)
+            if result is not None:
+                img, rect = result
+                x, y, w, h = rect
+                self.window_offset = (x, y)
+                self.region_widget.set_image(img)
+            # 恢复窗口
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        except Exception as e:
+            self.showNormal()
+            QMessageBox.warning(self, "错误", f"窗口截图失败：{str(e)}")
+
     def _clear_selection(self):
         """清除选择"""
         self.region_widget.clear_selection()
@@ -308,11 +424,16 @@ class CalibrationDialog(QDialog):
             QMessageBox.warning(self, "提示", "请先截取屏幕")
             return
 
-        # 收集结果
+        # 收集结果，应用窗口偏移量
         self.result_regions = {}
+        offset_x, offset_y = self.window_offset
+
         for region_type, rect in self.region_widget.regions.items():
             if rect:
-                self.result_regions[region_type] = list(rect)
+                x, y, w, h = rect
+                # 加上窗口偏移量，转换为屏幕坐标
+                screen_rect = (x + offset_x, y + offset_y, w, h)
+                self.result_regions[region_type] = list(screen_rect)
 
         if not self.result_regions:
             QMessageBox.warning(self, "提示", "请至少选择一个区域")

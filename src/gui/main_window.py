@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QGroupBox, QListWidget, QSplitter,
     QMessageBox
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSlot
 from PyQt6.QtGui import QFont, QColor
 
 from config.settings import WINDOW_WIDTH, WINDOW_HEIGHT, GameRegions
@@ -18,6 +18,7 @@ from src.game.card import Card, cards_to_str
 from src.ai.optimal_play import OptimalPlayEngine
 from src.ocr.auto_recognizer import AutoRecognizer
 from src.gui.calibration_dialog import CalibrationDialog
+from src.gui.recognition_worker import RecognitionWorker
 
 
 class MainWindow(QMainWindow):
@@ -37,9 +38,20 @@ class MainWindow(QMainWindow):
         # 状态
         self.is_monitoring = False
 
-        # 定时器
+        # 后台识别线程
+        self.recognition_thread = QThread()
+        self.recognition_worker = RecognitionWorker(self.auto_recognizer)
+        self.recognition_worker.moveToThread(self.recognition_thread)
+
+        # 连接信号
+        self.recognition_worker.hand_recognized.connect(self._on_hand_recognized)
+        self.recognition_worker.play_recognized.connect(self._on_play_recognized)
+        self.recognition_worker.play_cleared.connect(self._on_play_cleared)
+        self.recognition_worker.log_message.connect(self._on_log_message)
+
+        # 定时器 - 触发后台识别
         self.monitor_timer = QTimer()
-        self.monitor_timer.timeout.connect(self._monitor_update)
+        self.monitor_timer.timeout.connect(self.recognition_worker.do_recognition)
 
         # 初始化UI
         self._init_ui()
@@ -175,6 +187,9 @@ class MainWindow(QMainWindow):
         if self.is_monitoring:
             # 停止监控
             self.monitor_timer.stop()
+            self.recognition_worker.stop()
+            self.recognition_thread.quit()
+            self.recognition_thread.wait()
             self.is_monitoring = False
             self.btn_toggle_monitor.setText("开始监控")
             self.status_label.setText("已停止监控")
@@ -187,38 +202,36 @@ class MainWindow(QMainWindow):
             self.is_monitoring = True
             self.btn_toggle_monitor.setText("停止监控")
             self.status_label.setText("监控中...")
-            self.monitor_timer.start(500)  # 500ms 间隔
+            self.recognition_worker.set_running(True)
+            self.recognition_thread.start()
+            self.monitor_timer.start(1000)  # 1000ms 间隔
 
-    def _monitor_update(self):
-        """定时更新 - 监控核心逻辑"""
-        try:
-            # 1. 检查手牌区（只在开局时识别一次）
-            if not self.game_state.my_hand and self.auto_recognizer.has_hand_region():
-                hand = self.auto_recognizer.check_hand_region()
-                if hand:
-                    self.game_state.my_hand = hand
-                    self._update_hand_display()
-                    self._update_remaining_display()
-                    self._update_suggestions()
-                    self.status_label.setText(f"已识别手牌: {len(hand)} 张")
+    @pyqtSlot(list)
+    def _on_hand_recognized(self, hand: list):
+        """手牌识别完成（在主线程中执行）"""
+        self.game_state.my_hand = hand
+        self._update_hand_display()
+        self._update_remaining_display()
+        self._update_suggestions()
+        self.status_label.setText(f"已识别手牌: {len(hand)} 张")
 
-            # 2. 检查出牌区
-            if self.auto_recognizer.has_play_region():
-                play = self.auto_recognizer.check_play_region()
-                if play is not None:
-                    if play:
-                        # 有新牌
-                        self._process_new_play(play)
-                    else:
-                        # 空牌（出牌区清空）
-                        if self.game_state.current_play:
-                            # 如果之前有牌，说明一轮结束
-                            self.game_state.current_play = []
-                            self._update_last_play_display()
+    @pyqtSlot(list)
+    def _on_play_recognized(self, play: list):
+        """出牌识别完成（在主线程中执行）"""
+        self._process_new_play(play)
 
-        except Exception as e:
-            logger = __import__('logging').getLogger(__name__)
-            logger.warning(f"Monitor update error: {e}")
+    @pyqtSlot()
+    def _on_play_cleared(self):
+        """出牌区清空（在主线程中执行）"""
+        if self.game_state.current_play:
+            self.game_state.current_play = []
+            self._update_last_play_display()
+
+    @pyqtSlot(str)
+    def _on_log_message(self, message: str):
+        """处理日志消息"""
+        logger = __import__('logging').getLogger(__name__)
+        logger.warning(message)
 
     def _process_new_play(self, cards: list):
         """处理新识别到的牌"""
@@ -269,6 +282,7 @@ class MainWindow(QMainWindow):
             self.game_state.reset()
             self.card_tracker.reset()
             self.auto_recognizer.reset()
+            self.recognition_worker.reset()
 
             self._update_hand_display()
             self._update_last_play_display()
@@ -327,6 +341,9 @@ class MainWindow(QMainWindow):
         """关闭事件"""
         if self.is_monitoring:
             self.monitor_timer.stop()
+            self.recognition_worker.stop()
+            self.recognition_thread.quit()
+            self.recognition_thread.wait()
         self.game_state.save_config()
         event.accept()
 

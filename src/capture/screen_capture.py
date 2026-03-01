@@ -122,6 +122,54 @@ class ScreenCapture:
         except ImportError:
             return []
 
+    def get_window_rect(self, hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+        """
+        获取窗口位置和大小
+
+        Args:
+            hwnd: 窗口句柄
+
+        Returns:
+            (x, y, w, h)
+        """
+        try:
+            import win32gui
+            rect = win32gui.GetWindowRect(hwnd)
+            x, y, right, bottom = rect
+            w = right - x
+            h = bottom - y
+            return (x, y, w, h)
+        except Exception:
+            return None
+
+    def capture_window(self, hwnd: int) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
+        """
+        截取指定窗口
+
+        Args:
+            hwnd: 窗口句柄
+
+        Returns:
+            (RGB图像数组, 窗口区域(x, y, w, h)) 或 None
+        """
+        rect = self.get_window_rect(hwnd)
+        if not rect:
+            return None
+        x, y, w, h = rect
+        if w <= 0 or h <= 0:
+            return None
+
+        # 使用 mss 截取窗口区域
+        monitor = {"top": y, "left": x, "width": w, "height": h}
+
+        try:
+            img = self.sct.grab(monitor)
+            frame = np.array(img)
+            self._last_frame = frame[:, :, :3]
+            return self._last_frame, rect
+        except Exception:
+            return None
+
     def find_window_by_title(self, title_contains: str) -> Optional[Tuple[int, int, int, int]]:
         """
         通过标题查找窗口
