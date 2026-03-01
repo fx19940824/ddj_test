@@ -48,10 +48,14 @@ class MainWindow(QMainWindow):
         self.recognition_worker.play_recognized.connect(self._on_play_recognized)
         self.recognition_worker.play_cleared.connect(self._on_play_cleared)
         self.recognition_worker.log_message.connect(self._on_log_message)
+        self.recognition_worker.status_update.connect(self._on_status_update)
 
         # 定时器 - 触发后台识别
         self.monitor_timer = QTimer()
         self.monitor_timer.timeout.connect(self.recognition_worker.do_recognition)
+
+        # 识别计数
+        self.recognition_count = 0
 
         # 初始化UI
         self._init_ui()
@@ -146,6 +150,17 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(last_play_group)
 
+        # 日志显示
+        log_group = QGroupBox("识别日志")
+        log_layout = QVBoxLayout(log_group)
+
+        self.log_list = QListWidget()
+        self.log_list.setFont(QFont("Consolas", 9))
+        self.log_list.setMaximumHeight(120)
+        log_layout.addWidget(self.log_list)
+
+        main_layout.addWidget(log_group)
+
     def _open_calibration(self):
         """打开校准对话框"""
         # 转换当前配置为字典
@@ -193,6 +208,7 @@ class MainWindow(QMainWindow):
             self.is_monitoring = False
             self.btn_toggle_monitor.setText("开始监控")
             self.status_label.setText("已停止监控")
+            self._add_log("已停止监控")
         else:
             # 开始监控
             if not self.auto_recognizer.has_hand_region() and not self.auto_recognizer.has_play_region():
@@ -200,8 +216,10 @@ class MainWindow(QMainWindow):
                 return
 
             self.is_monitoring = True
+            self.recognition_count = 0
             self.btn_toggle_monitor.setText("停止监控")
             self.status_label.setText("监控中...")
+            self._add_log("开始监控...")
             self.recognition_worker.set_running(True)
             self.recognition_thread.start()
             self.monitor_timer.start(1000)  # 1000ms 间隔
@@ -232,6 +250,23 @@ class MainWindow(QMainWindow):
         """处理日志消息"""
         logger = __import__('logging').getLogger(__name__)
         logger.warning(message)
+        self._add_log(message)
+
+    @pyqtSlot(str)
+    def _on_status_update(self, status: str):
+        """处理状态更新"""
+        self.status_label.setText(status)
+
+    def _add_log(self, message: str):
+        """添加日志到UI"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_list.addItem(f"[{timestamp}] {message}")
+        # 自动滚动到底部
+        self.log_list.scrollToBottom()
+        # 限制日志数量
+        if self.log_list.count() > 50:
+            self.log_list.takeItem(0)
 
     def _process_new_play(self, cards: list):
         """处理新识别到的牌"""

@@ -32,7 +32,7 @@ class AutoRecognizer:
         self.last_recognized_play: List[Card] = []
 
         # 降低识别阈值以提高识别率
-        self.card_detector.set_threshold(0.5)
+        self.card_detector.set_threshold(0.4)
 
     def update_regions(self, regions: GameRegions):
         """更新区域配置"""
@@ -59,13 +59,20 @@ class AutoRecognizer:
         # 捕捉手牌区
         hand_img = self._capture_region(self.regions.hand_region)
         if hand_img is None:
+            logger.warning("Failed to capture hand region")
             return None
 
-        # 检查是否有显著变化
+        # 检查是否有显著变化（降低阈值使其更容易触发）
+        has_changed = True
         if self.last_hand_image is not None:
-            if not self._image_changed(self.last_hand_image, hand_img, threshold=0.15):
-                # 没有显著变化
-                return None
+            has_changed = self._image_changed(self.last_hand_image, hand_img, threshold=0.03)
+
+        # 无论是否识别到卡片，都保存图像用于下次变化检测
+        self.last_hand_image = hand_img
+
+        if not has_changed:
+            logger.debug("Hand region image not changed, skipping")
+            return None
 
         # 识别手牌
         cards = self.card_detector.detect_cards(hand_img)
@@ -76,14 +83,16 @@ class AutoRecognizer:
 
             # 检查是否与上次识别结果相同
             if self._cards_equal(cards, self.last_recognized_hand):
+                logger.debug("Hand cards same as last time, skipping")
                 return None
 
             # 更新状态
-            self.last_hand_image = hand_img
             self.last_recognized_hand = cards
 
             logger.info(f"Recognized hand: {cards}")
             return cards
+        else:
+            logger.debug("No cards detected in hand region")
 
         return None
 
@@ -100,13 +109,21 @@ class AutoRecognizer:
         # 捕捉出牌区
         play_img = self._capture_region(self.regions.play_region)
         if play_img is None:
+            logger.warning("Failed to capture play region")
             return None
 
-        # 检查是否有显著变化
+        # 检查是否有显著变化（降低阈值）
+        has_changed = True
         if self.last_play_image is not None:
-            if not self._image_changed(self.last_play_image, play_img, threshold=0.1):
-                # 没有显著变化
-                return None
+            has_changed = self._image_changed(self.last_play_image, play_img, threshold=0.05)
+
+        # 无论是否识别到卡片，都保存图像用于下次变化检测
+        old_play_image = self.last_play_image
+        self.last_play_image = play_img
+
+        if not has_changed:
+            logger.debug("Play region image not changed, skipping")
+            return None
 
         # 识别出牌
         cards = self.card_detector.detect_cards(play_img)
@@ -117,22 +134,22 @@ class AutoRecognizer:
 
             # 检查是否与上次识别结果相同
             if self._cards_equal(cards, self.last_recognized_play):
+                logger.debug("Play cards same as last time, skipping")
                 return None
 
             # 更新状态
-            self.last_play_image = play_img
             self.last_recognized_play = cards
 
             logger.info(f"Recognized play: {cards}")
             return cards
+        else:
+            logger.debug("No cards detected in play region")
 
         # 如果没有识别到牌，但图像有变化，清空上次结果
-        if self.last_play_image is not None:
-            if self._image_changed(self.last_play_image, play_img, threshold=0.2):
-                self.last_play_image = play_img
-                if self.last_recognized_play:
-                    self.last_recognized_play = []
-                    return []
+        if old_play_image is not None:
+            if self.last_recognized_play:
+                self.last_recognized_play = []
+                return []
 
         return None
 
