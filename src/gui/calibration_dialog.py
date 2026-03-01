@@ -78,6 +78,7 @@ class RegionSelectWidget(QWidget):
         self.regions: Dict[str, Optional[Tuple[int, int, int, int]]] = {
             'hand': None,
             'play': None,
+            'landlord': None,
         }
 
         self.current_region: str = 'hand'  # 当前要选择的区域
@@ -89,11 +90,13 @@ class RegionSelectWidget(QWidget):
         self.region_colors: Dict[str, QColor] = {
             'hand': QColor(0, 255, 0, 100),  # 绿色
             'play': QColor(0, 100, 255, 100),  # 蓝色
+            'landlord': QColor(255, 100, 100, 100),  # 红色
         }
 
         self.region_names: Dict[str, str] = {
             'hand': '手牌区',
             'play': '出牌区',
+            'landlord': '地主标识区',
         }
 
         self.setMinimumSize(800, 600)
@@ -283,6 +286,12 @@ class CalibrationDialog(QDialog):
         self.btn_play.clicked.connect(lambda: self._select_region('play'))
         self.region_group.addButton(self.btn_play)
         region_btn_layout.addWidget(self.btn_play)
+
+        self.btn_landlord = QPushButton("地主标识区")
+        self.btn_landlord.setCheckable(True)
+        self.btn_landlord.clicked.connect(lambda: self._select_region('landlord'))
+        self.region_group.addButton(self.btn_landlord)
+        region_btn_layout.addWidget(self.btn_landlord)
 
         region_btn_layout.addStretch()
         layout.addLayout(region_btn_layout)

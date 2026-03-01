@@ -22,6 +22,8 @@ class RecognitionWorker(QObject):
     log_message = pyqtSignal(str)
     # 信号：状态更新
     status_update = pyqtSignal(str)
+    # 信号：身份变化（True=地主, False=农民）
+    role_changed = pyqtSignal(bool)
 
     def __init__(self, auto_recognizer: AutoRecognizer):
         super().__init__()
@@ -29,6 +31,7 @@ class RecognitionWorker(QObject):
         self._running: bool = False
         self._my_hand_empty: bool = True  # 手牌是否为空
         self._recognition_count: int = 0
+        self._last_role: Optional[bool] = None  # 上次识别的身份：None=未知, True=地主, False=农民
 
     def stop(self):
         """停止识别"""
@@ -83,6 +86,15 @@ class RecognitionWorker(QObject):
                         # 空牌（出牌区清空）
                         self.log_message.emit("出牌区已清空")
                         self.play_cleared.emit()
+
+            # 3. 检查地主标识区（每10次检查一次，避免过于频繁）
+            if self.auto_recognizer.has_landlord_region() and self._recognition_count % 10 == 0:
+                is_landlord = self.auto_recognizer.check_landlord_region()
+                if is_landlord is not None and is_landlord != self._last_role:
+                    self._last_role = is_landlord
+                    role_text = "地主" if is_landlord else "农民"
+                    self.log_message.emit(f"身份识别: {role_text}")
+                    self.role_changed.emit(is_landlord)
 
         except Exception as e:
             self.log_message.emit(f"识别错误: {e}")

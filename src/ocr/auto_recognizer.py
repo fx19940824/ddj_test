@@ -46,6 +46,54 @@ class AutoRecognizer:
         """是否有出牌区配置"""
         return self.regions.play_region is not None
 
+    def has_landlord_region(self) -> bool:
+        """是否有地主标识区配置"""
+        return self.regions.landlord_indicator is not None
+
+    def check_landlord_region(self) -> Optional[bool]:
+        """
+        检查地主标识区，判断是否是地主
+
+        Returns:
+            True=是地主, False=不是地主, None=无法判断
+        """
+        if not self.has_landlord_region():
+            return None
+
+        # 捕捉地主标识区
+        img = self._capture_region(self.regions.landlord_indicator)
+        if img is None:
+            logger.warning("Failed to capture landlord region")
+            return None
+
+        try:
+            # 地主标识通常是红色的，检测红色像素比例
+            if len(img.shape) == 3:
+                # RGB图像
+                r = img[:, :, 0]
+                g = img[:, :, 1]
+                b = img[:, :, 2]
+
+                # 红色显著高于绿色和蓝色
+                red_dominant = (r > g + 50) & (r > b + 50)
+                red_ratio = np.sum(red_dominant) / (img.shape[0] * img.shape[1])
+
+                logger.debug(f"Landlord region red ratio: {red_ratio:.2f}")
+
+                # 如果红色像素比例超过 5%，认为是地主标识
+                if red_ratio > 0.05:
+                    logger.info("Detected landlord indicator")
+                    return True
+                else:
+                    return False
+            else:
+                # 灰度图像，无法判断颜色
+                return None
+
+        except Exception as e:
+            logger.warning(f"Failed to check landlord region: {e}")
+            return None
+
     def check_hand_region(self) -> Optional[List[Card]]:
         """
         检查手牌区，返回识别到的手牌（如果有变化）
@@ -156,9 +204,10 @@ class AutoRecognizer:
     def _capture_region(self, region: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
         """捕捉指定区域"""
         try:
+            logger.debug(f"Capturing region: {region}")
             return self.screen_capture.capture_region(region)
         except Exception as e:
-            logger.warning(f"Failed to capture region: {e}")
+            logger.warning(f"Failed to capture region {region}: {e}")
             return None
 
     def _image_changed(self, img1: np.ndarray, img2: np.ndarray,

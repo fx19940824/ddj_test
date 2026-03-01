@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self.recognition_worker.play_cleared.connect(self._on_play_cleared)
         self.recognition_worker.log_message.connect(self._on_log_message)
         self.recognition_worker.status_update.connect(self._on_status_update)
+        self.recognition_worker.role_changed.connect(self._on_role_changed)
 
         # 定时器 - 触发后台识别
         self.monitor_timer = QTimer()
@@ -87,6 +88,14 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_reset)
 
         toolbar.addStretch()
+
+        # 身份显示
+        self.role_label = QLabel("身份: 待识别")
+        self.role_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        self.role_label.setStyleSheet("color: gray;")
+        toolbar.addWidget(self.role_label)
+
+        toolbar.addSpacing(20)
 
         self.status_label = QLabel("就绪")
         self.status_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
@@ -257,6 +266,21 @@ class MainWindow(QMainWindow):
         """处理状态更新"""
         self.status_label.setText(status)
 
+    @pyqtSlot(bool)
+    def _on_role_changed(self, is_landlord: bool):
+        """处理身份变化"""
+        from src.game.game_state import PlayerRole
+        if is_landlord:
+            self.game_state.my_role = PlayerRole.LANDLORD
+            self.role_label.setText("身份: 地主")
+            self.role_label.setStyleSheet("color: red; font-weight: bold;")
+        else:
+            self.game_state.my_role = PlayerRole.PEASANT
+            self.role_label.setText("身份: 农民")
+            self.role_label.setStyleSheet("color: blue; font-weight: bold;")
+        role_text = "地主" if is_landlord else "农民"
+        self._add_log(f"身份识别为: {role_text}")
+
     def _add_log(self, message: str):
         """添加日志到UI"""
         from datetime import datetime
@@ -330,6 +354,10 @@ class MainWindow(QMainWindow):
             self.card_tracker.reset()
             self.auto_recognizer.reset()
             self.recognition_worker.reset()
+
+            # 重置身份显示
+            self.role_label.setText("身份: 待识别")
+            self.role_label.setStyleSheet("color: gray;")
 
             self._update_hand_display()
             self._update_last_play_display()
