@@ -15,9 +15,12 @@ class ScreenCapture:
     """屏幕捕捉器"""
 
     def __init__(self):
-        self.sct = mss.mss()
-        self.monitor = self.sct.monitors[0]  # 主显示器
+        # 不在 __init__ 中创建 mss 实例，避免跨线程问题
         self._last_frame = None
+
+    def _get_sct(self):
+        """获取新的 mss 实例（每次调用都创建新实例）"""
+        return mss.mss()
 
     def capture_full_screen(self) -> np.ndarray:
         """
@@ -26,10 +29,13 @@ class ScreenCapture:
         Returns:
             RGB图像数组
         """
-        img = self.sct.grab(self.monitor)
-        frame = np.array(img)
-        # BGRA -> RGB
-        return frame[:, :, :3]
+        with self._get_sct() as sct:
+            monitor = sct.monitors[0]
+            img = sct.grab(monitor)
+            frame = np.array(img)
+            # BGRA -> RGB
+            self._last_frame = frame[:, :, :3]
+            return self._last_frame
 
     def capture_region(self, region: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
         """
@@ -51,11 +57,15 @@ class ScreenCapture:
         monitor = {"top": y, "left": x, "width": w, "height": h}
 
         try:
-            img = self.sct.grab(monitor)
-            frame = np.array(img)
-            self._last_frame = frame[:, :, :3]
-            return self._last_frame
-        except Exception:
+            with self._get_sct() as sct:
+                img = sct.grab(monitor)
+                frame = np.array(img)
+                self._last_frame = frame[:, :, :3]
+                return self._last_frame
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to capture region {region}: {e}")
             return None
 
     def get_last_frame(self) -> Optional[np.ndarray]:
@@ -97,7 +107,9 @@ class ScreenCapture:
         Returns:
             (width, height)
         """
-        return self.monitor["width"], self.monitor["height"]
+        with self._get_sct() as sct:
+            monitor = sct.monitors[0]
+            return monitor["width"], monitor["height"]
 
     def list_windows(self):
         """
@@ -163,10 +175,11 @@ class ScreenCapture:
         monitor = {"top": y, "left": x, "width": w, "height": h}
 
         try:
-            img = self.sct.grab(monitor)
-            frame = np.array(img)
-            self._last_frame = frame[:, :, :3]
-            return self._last_frame, rect
+            with self._get_sct() as sct:
+                img = sct.grab(monitor)
+                frame = np.array(img)
+                self._last_frame = frame[:, :, :3]
+                return self._last_frame, rect
         except Exception:
             return None
 
@@ -202,4 +215,4 @@ class ScreenCapture:
 
     def close(self):
         """关闭"""
-        self.sct.close()
+        pass
