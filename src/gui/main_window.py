@@ -178,6 +178,9 @@ class MainWindow(QMainWindow):
             initial_regions['hand'] = list(self.game_state.regions.hand_region)
         if self.game_state.regions.play_region:
             initial_regions['play'] = list(self.game_state.regions.play_region)
+        # 传递 landlord_indicator (转为 'landlord' 键)
+        if self.game_state.regions.landlord_indicator:
+            initial_regions['landlord'] = list(self.game_state.regions.landlord_indicator)
 
         dialog = CalibrationDialog(self, initial_regions)
         if dialog.exec() == CalibrationDialog.DialogCode.Accepted:
@@ -188,6 +191,9 @@ class MainWindow(QMainWindow):
                 self.game_state.regions.hand_region = tuple(regions['hand'])
             if 'play' in regions:
                 self.game_state.regions.play_region = tuple(regions['play'])
+            # 保存 landlord 区域到 landlord_indicator
+            if 'landlord' in regions:
+                self.game_state.regions.landlord_indicator = tuple(regions['landlord'])
 
             # 更新识别器
             self.auto_recognizer.update_regions(self.game_state.regions)
@@ -200,6 +206,9 @@ class MainWindow(QMainWindow):
                 status_parts.append("手牌区")
             if self.game_state.regions.play_region:
                 status_parts.append("出牌区")
+            # 显示地主标识区状态
+            if self.game_state.regions.landlord_indicator:
+                status_parts.append("地主标识区")
 
             if status_parts:
                 self.status_label.setText(f"已校准: {', '.join(status_parts)}")
